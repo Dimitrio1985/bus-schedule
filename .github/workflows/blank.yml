@@ -71,7 +71,7 @@ jobs:
               <uses-permission android:name="android.permission.INTERNET" />
               <application
                   android:usesCleartextTraffic="true"
-                  android:label="Автобусы"
+                  android:label="@string/app_name"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
                   <activity
                       android:name=".MainActivity"
@@ -83,6 +83,36 @@ jobs:
                   </activity>
               </application>
           </manifest>
+          EOF
+
+          mkdir -p app/src/main/res/values app/src/main/res/values-ru app/src/main/res/values-uk app/src/main/res/values-pl
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Buses</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values-ru/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Автобусы</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values-uk/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Автобуси</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values-pl/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Autobusy</string>
+          </resources>
           EOF
 
           cat > app/src/main/java/com/dmytryku/busschedule/MainActivity.java <<'EOF'
@@ -143,14 +173,15 @@ jobs:
           <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Расписание автобусов</title>
+          <title>Bus timetable</title>
           <style>
-          :root{--bg:#f5f6f8;--card:#fff;--text:#1b1f24;--muted:#6b7280;--accent:#1a73e8;--danger:#d93025;--line:#e3e5e8}
-          @media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1c2026;--text:#ffffff;--muted:#98a0ab;--accent:#7ab0ff;--danger:#ff8a80;--line:#2b3037}}
+          :root{--bg:#f5f6f8;--card:#fff;--text:#1b1f24;--muted:#6b7280;--accent:#1a73e8;--danger:#d93025;--line:#e3e5e8;color-scheme:light}
+          :root[data-theme="dark"]{--bg:#121417;--card:#1c2026;--text:#ffffff;--muted:#98a0ab;--accent:#7ab0ff;--danger:#ff8a80;--line:#2b3037;color-scheme:dark}
           *{box-sizing:border-box}
           body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,sans-serif}
           main{max-width:560px;margin:0 auto;padding:16px 16px 100px}
-          h1{font-size:22px;margin:24px 0 16px}
+          header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:24px 0 16px}
+          h1{font-size:22px;margin:0}
           .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
           input{width:100%;padding:12px;margin-bottom:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font-size:16px}
           button{font:inherit;border:0;border-radius:10px;padding:12px 16px}
@@ -161,6 +192,7 @@ jobs:
           .stop small{display:block;color:var(--muted);font-weight:400;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
           .ic{background:transparent;color:var(--muted);padding:8px 10px;font-size:18px}
           .del{color:var(--danger)}
+          #theme{flex:none;width:44px;height:44px;padding:0;border-radius:50%;background:var(--card);border:1px solid var(--line);font-size:20px}
           .empty{text-align:center;color:var(--muted);padding:24px 0}
           .fab{position:fixed;right:20px;bottom:24px;width:60px;height:60px;border-radius:50%;padding:0;background:var(--accent);color:#fff;font-size:34px;line-height:1;box-shadow:0 4px 14px rgba(0,0,0,.35)}
           .ov{display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;padding:16px;z-index:10}
@@ -172,29 +204,65 @@ jobs:
           </head>
           <body>
           <main>
-            <h1>🚌 Расписание автобусов</h1>
+            <header>
+              <h1 id="h1"></h1>
+              <button id="theme"></button>
+            </header>
             <div id="list"></div>
           </main>
-          <button class="fab" id="add" aria-label="Добавить остановку">+</button>
+          <button class="fab" id="add">+</button>
           <div class="ov" id="ov">
             <div class="dlg">
-              <h2 id="ttl">Новая остановка</h2>
-              <input id="name" placeholder="Название остановки" autocomplete="off">
-              <input id="url" type="url" placeholder="Вставьте ссылку на расписание" autocomplete="off">
+              <h2 id="ttl"></h2>
+              <input id="name" autocomplete="off">
+              <input id="url" type="url" autocomplete="off">
               <div class="row">
-                <button class="secondary" id="cancel">Отмена</button>
-                <button class="primary" id="save">Сохранить</button>
+                <button class="secondary" id="cancel"></button>
+                <button class="primary" id="save"></button>
               </div>
             </div>
           </div>
           <script>
+          var L={
+            ru:{title:"Расписание автобусов",empty:"Пока нет остановок.<br>Нажмите «+», чтобы добавить.",newStop:"Новая остановка",editStop:"Изменить остановку",name:"Название остановки",url:"Вставьте ссылку на расписание",cancel:"Отмена",save:"Сохранить",del:"Удалить «%s»?",theme:"Сменить тему"},
+            uk:{title:"Розклад автобусів",empty:"Поки немає зупинок.<br>Натисніть «+», щоб додати.",newStop:"Нова зупинка",editStop:"Змінити зупинку",name:"Назва зупинки",url:"Вставте посилання на розклад",cancel:"Скасувати",save:"Зберегти",del:"Видалити «%s»?",theme:"Змінити тему"},
+            pl:{title:"Rozkład autobusów",empty:"Brak przystanków.<br>Naciśnij „+”, aby dodać.",newStop:"Nowy przystanek",editStop:"Edytuj przystanek",name:"Nazwa przystanku",url:"Wklej link do rozkładu",cancel:"Anuluj",save:"Zapisz",del:"Usunąć „%s”?",theme:"Zmień motyw"},
+            en:{title:"Bus timetable",empty:"No stops yet.<br>Tap “+” to add one.",newStop:"New stop",editStop:"Edit stop",name:"Stop name",url:"Paste the timetable link",cancel:"Cancel",save:"Save",del:"Delete “%s”?",theme:"Switch theme"}
+          };
+          var lang=((navigator.language||"en")+"").slice(0,2).toLowerCase();
+          var T=L[lang]||L.en;
+          document.documentElement.lang=L[lang]?lang:"en";
+          document.title=T.title;
+          document.getElementById("h1").textContent=T.title;
+          document.getElementById("name").placeholder=T.name;
+          document.getElementById("url").placeholder=T.url;
+          document.getElementById("cancel").textContent=T.cancel;
+          document.getElementById("save").textContent=T.save;
+          document.getElementById("theme").setAttribute("aria-label",T.theme);
+          document.getElementById("add").setAttribute("aria-label",T.newStop);
+
           var KEY="bus-stops",stops=[],editing=-1,isOpen=false;
+          function applyTheme(t){
+            document.documentElement.setAttribute("data-theme",t);
+            document.getElementById("theme").textContent=(t==="dark")?"☀️":"🌙";
+          }
+          var theme=null;
+          try{theme=localStorage.getItem("theme")}catch(e){}
+          if(theme!=="dark"&&theme!=="light"){
+            theme=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";
+          }
+          applyTheme(theme);
+          document.getElementById("theme").onclick=function(){
+            theme=(theme==="dark")?"light":"dark";
+            applyTheme(theme);
+            try{localStorage.setItem("theme",theme)}catch(e){}
+          };
           function load(){try{stops=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){stops=[]}}
           function store(){try{localStorage.setItem(KEY,JSON.stringify(stops))}catch(e){}}
           function esc(s){return s.replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
           function render(){
             var l=document.getElementById("list");
-            if(!stops.length){l.innerHTML='<div class="empty">Пока нет остановок.<br>Нажмите «+», чтобы добавить.</div>';return}
+            if(!stops.length){l.innerHTML='<div class="empty">'+T.empty+'</div>';return}
             l.innerHTML=stops.map(function(s,i){
               return '<div class="card stop"><a href="'+esc(s.url)+'" target="_blank">'+esc(s.name)+'<small>'+esc(s.url)+'</small></a>'+
               '<button class="ic" onclick="openDlg('+i+')">✏️</button>'+
@@ -204,7 +272,7 @@ jobs:
           function fixUrl(u){u=u.trim();if(u&&!/^https?:\/\//i.test(u))u="https://"+u;return u}
           function openDlg(i){
             editing=(typeof i==="number")?i:-1;
-            document.getElementById("ttl").textContent=editing>=0?"Изменить остановку":"Новая остановка";
+            document.getElementById("ttl").textContent=editing>=0?T.editStop:T.newStop;
             document.getElementById("name").value=editing>=0?stops[editing].name:"";
             document.getElementById("url").value=editing>=0?stops[editing].url:"";
             document.getElementById("ov").className="ov open";
@@ -223,7 +291,7 @@ jobs:
             if(editing>=0){stops[editing]={name:n,url:u}}else stops.push({name:n,url:u});
             store();render();closeDlg()
           };
-          function del(i){if(confirm("Удалить «"+stops[i].name+"»?")){stops.splice(i,1);store();render()}}
+          function del(i){if(confirm(T.del.replace("%s",stops[i].name))){stops.splice(i,1);store();render()}}
           load();render();
           </script>
           </body>
