@@ -117,6 +117,9 @@ jobs:
                   WebSettings s = web.getSettings();
                   s.setJavaScriptEnabled(true);
                   s.setDomStorageEnabled(true);
+          s.setUseWideViewPort(true);
+          s.setLoadWithOverviewMode(true);
+          s.setTextZoom(100);
                   web.setWebChromeClient(new WebChromeClient());
                   web.setWebViewClient(new WebViewClient() {
                       @Override
