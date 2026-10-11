@@ -6,7 +6,7 @@ permissions:
   contents: write
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -336,4 +336,40 @@ jobs:
             if(!isOpen){isOpen=true;try{history.pushState({d:1},"")}catch(e){}}
             setTimeout(function(){$("name").focus()},50)
           }
-          function
+          function hideDlg(){isOpen=false;$("ov").className="ov"}
+          function closeDlg(){if(isOpen){try{history.back()}catch(e){hideDlg()}}}
+          window.addEventListener("popstate",hideDlg);
+          $("add").onclick=function(){openDlg()};
+          $("cancel").onclick=closeDlg;
+          $("ov").onclick=function(e){if(e.target===this)closeDlg()};
+          $("save").onclick=function(){
+            var n=$("name").value.trim(),u=fixUrl($("url").value);
+            if(!n||!u)return;
+            if(editing>=0){stops[editing]={name:n,url:u}}else stops.push({name:n,url:u});
+            store();render();closeDlg()
+          };
+          function del(i){if(confirm(T.del.replace("%s",stops[i].name))){stops.splice(i,1);store();render()}}
+          load();render();
+          </script>
+          </body>
+          </html>
+          EOF
+
+          if [ -f icon.png ]; then
+            mkdir -p app/src/main/res/mipmap-xxhdpi
+            cp icon.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            sed -i 's|<application|<application android:icon="@mipmap/ic_launcher"|' app/src/main/AndroidManifest.xml
+          fi
+      - name: Build APK
+        run: gradle assembleDebug
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk bus-schedule.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bus-schedule-apk
+          path: bus-schedule.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Автобусы v${{ github.run_number }}
+          files: bus-schedule.apk
