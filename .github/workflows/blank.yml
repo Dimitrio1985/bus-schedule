@@ -146,7 +146,7 @@ jobs:
           <title>Расписание автобусов</title>
           <style>
           :root{--bg:#f5f6f8;--card:#fff;--text:#1b1f24;--muted:#6b7280;--accent:#1a73e8;--danger:#d93025;--line:#e3e5e8}
-          @media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1c2026;--text:#eceef1;--muted:#98a0ab;--accent:#7ab0ff;--danger:#ff8a80;--line:#2b3037}}
+          @media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1c2026;--text:#ffffff;--muted:#98a0ab;--accent:#7ab0ff;--danger:#ff8a80;--line:#2b3037}}
           *{box-sizing:border-box}
           body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,sans-serif}
           main{max-width:560px;margin:0 auto;padding:16px 16px 100px}
@@ -157,7 +157,7 @@ jobs:
           .primary{background:var(--accent);color:#fff;font-weight:600}
           .secondary{background:transparent;color:var(--muted)}
           .stop{display:flex;align-items:center;gap:8px}
-          .stop a{flex:1;color:var(--text);text-decoration:none;font-weight:600;font-size:17px;padding:8px 0;word-break:break-word;min-width:0}
+          .stop a{flex:1;color:var(--text);text-decoration:none;font-weight:700;font-size:17px;padding:8px 0;word-break:break-word;min-width:0}
           .stop small{display:block;color:var(--muted);font-weight:400;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
           .ic{background:transparent;color:var(--muted);padding:8px 10px;font-size:18px}
           .del{color:var(--danger)}
