@@ -1,24 +1,43 @@
-name: Build APK
+name: Build Bus Schedule APK
+
 on:
   push:
+    branches: ["**"]
   workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
-      - name: Create project
+          gradle-version: "8.7"
+
+      - name: Create Android project
+        shell: bash
         run: |
-          mkdir -p app/src/main/java/com/dmytryku/busschedule app/src/main/assets
+          set -euo pipefail
+
+          mkdir -p app/src/main/java/com/dmytryku/busschedule
+          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -29,13 +48,14 @@ jobs:
               }
           }
           dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
                   google()
                   mavenCentral()
               }
           }
           rootProject.name = "BusSchedule"
-          include ':app'
+          include(":app")
           EOF
 
           cat > build.gradle <<'EOF'
@@ -48,16 +68,19 @@ jobs:
           plugins {
               id 'com.android.application'
           }
+
           android {
               namespace 'com.dmytryku.busschedule'
               compileSdk 34
+
               defaultConfig {
                   applicationId 'com.dmytryku.busschedule'
                   minSdk 24
                   targetSdk 34
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode 2
+                  versionName '2.0'
               }
+
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
@@ -65,54 +88,47 @@ jobs:
           }
           EOF
 
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">Bus Schedule Łódź</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/xml/network_security_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <domain-config cleartextTrafficPermitted="true">
+                  <domain includeSubdomains="false">rozklady.lodz.pl</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.INTERNET" />
+
               <application
-                  android:usesCleartextTraffic="true"
+                  android:allowBackup="true"
+                  android:usesCleartextTraffic="false"
+                  android:networkSecurityConfig="@xml/network_security_config"
                   android:label="@string/app_name"
-                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:supportsRtl="true">
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
+
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
+
                   </activity>
               </application>
           </manifest>
-          EOF
-
-          mkdir -p app/src/main/res/values app/src/main/res/values-ru app/src/main/res/values-uk app/src/main/res/values-pl
-
-          cat > app/src/main/res/values/strings.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">Buses</string>
-          </resources>
-          EOF
-
-          cat > app/src/main/res/values-ru/strings.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">Автобусы</string>
-          </resources>
-          EOF
-
-          cat > app/src/main/res/values-uk/strings.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">Автобуси</string>
-          </resources>
-          EOF
-
-          cat > app/src/main/res/values-pl/strings.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">Autobusy</string>
-          </resources>
           EOF
 
           cat > app/src/main/java/com/dmytryku/busschedule/MainActivity.java <<'EOF'
@@ -127,9 +143,87 @@ jobs:
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import android.widget.Toast;
 
           public class MainActivity extends Activity {
               private WebView web;
+
+              private boolean isOfficial(Uri uri) {
+                  String host = uri.getHost();
+                  return host != null &&
+                      host.equalsIgnoreCase("rozklady.lodz.pl") &&
+                      ("https".equalsIgnoreCase(uri.getScheme()) ||
+                       "http".equalsIgnoreCase(uri.getScheme()));
+              }
+
+              private boolean isLocal(Uri uri) {
+                  return "file".equalsIgnoreCase(uri.getScheme())
+                      && uri.getPath() != null
+                      && uri.getPath().startsWith("/android_asset/");
+              }
+
+              private boolean handleUrl(Uri uri) {
+                  if (isLocal(uri) || isOfficial(uri)) return false;
+
+                  String scheme = uri.getScheme();
+                  if ("https".equalsIgnoreCase(scheme) ||
+                      "http".equalsIgnoreCase(scheme) ||
+                      "mailto".equalsIgnoreCase(scheme) ||
+                      "tel".equalsIgnoreCase(scheme)) {
+                      try {
+                          startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                      } catch (Exception e) {
+                          Toast.makeText(this,
+                              "No application available for this link",
+                              Toast.LENGTH_SHORT).show();
+                      }
+                  }
+                  return true;
+              }
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  web = new WebView(this);
+                  setContentView(web);
+
+                  WebSettings settings = web.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setAllowFileAccess(false);
+                  settings.setAllowContentAccess(false);
+                  settings.setUseWideViewPort(true);
+                  settings.setLoadWithOverviewMode(true);
+                  settings.setTextZoom(100);
+
+                  web.setWebChromeClient(new WebChromeClient());
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(
+                          WebView view, WebResourceRequest request) {
+                          return handleUrl(request.getUrl());
+                      }
+
+                      @Override
+                      public boolean shouldOverrideUrlLoading(
+                          WebView view, String url) {
+                          return handleUrl(Uri.parse(url));
+                      }
+                  });
+
+                  if (savedInstanceState != null) {
+                      web.restoreState(savedInstanceState);
+                  } else {
+                      web.loadUrl("file:///android_asset/index.html");
+                  }
+              }
+
+              @Override
+              protected void onSaveInstanceState(Bundle outState) {
+                  super.onSaveInstanceState(outState);
+                  if (web != null) web.saveState(outState);
+              }
 
               @Override
               public void onBackPressed() {
@@ -141,297 +235,605 @@ jobs:
               }
 
               @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  web = new WebView(this);
-                  setContentView(web);
-                  WebSettings s = web.getSettings();
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-          s.setUseWideViewPort(true);
-          s.setLoadWithOverviewMode(true);
-          s.setTextZoom(100);
-                  web.setWebChromeClient(new WebChromeClient());
-                  web.setWebViewClient(new WebViewClient() {
-                      @Override
-                      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                          Uri u = request.getUrl();
-                          String sch = u.getScheme();
-                          if ("http".equals(sch) || "https".equals(sch) || "file".equals(sch)) return false;
-                          try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception e) { }
-                          return true;
-                      }
-                  });
-                  web.loadUrl("file:///android_asset/index.html");
+              protected void onDestroy() {
+                  if (web != null) {
+                      web.destroy();
+                      web = null;
+                  }
+                  super.onDestroy();
               }
           }
           EOF
 
           cat > app/src/main/assets/index.html <<'EOF'
-          <!DOCTYPE html>
+          <!doctype html>
           <html lang="uk">
           <head>
           <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Bus timetable</title>
+          <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+          <meta name="theme-color" content="#101827">
+          <title>Bus Schedule Łódź</title>
           <style>
-          :root{--bg:#f4f6fa;--card:#fff;--text:#161a20;--muted:#8a93a1;--accent:#1a73e8;--line:#e4e7ec;--chip:#e8f0fe;--fab1:#3d8bff;--fab2:#1a56db;--glow:rgba(26,115,232,.45);color-scheme:light}
-          :root[data-theme="dark"]{--bg:#111316;--card:#1b1f25;--text:#ffffff;--muted:#7f8896;--accent:#7ab0ff;--line:#2a2f37;--chip:#232b38;--fab1:#7fb4ff;--fab2:#3f74e6;--glow:rgba(90,150,255,.4);color-scheme:dark}
-          *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-          body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,sans-serif}
-          main{max-width:560px;margin:0 auto;padding:16px 16px 110px}
-          header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 18px}
-          h1{font-size:23px;font-weight:800;letter-spacing:-.2px;margin:0}
-          button{font:inherit;border:0;border-radius:10px;padding:12px 16px;cursor:pointer}
-          .card{background:var(--card);border:1px solid var(--line);border-radius:18px;margin-bottom:12px}
-          .enter{animation:rise .35s ease both}
-          @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-          @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
-          .stop{display:flex;align-items:center;gap:6px;padding:12px 8px 12px 12px;transition:transform .12s ease,background .12s ease}
-          .stop:active{transform:scale(.975);background:var(--chip)}
-          .main{flex:1;min-width:0;display:flex;align-items:center;gap:13px;text-decoration:none;color:var(--text)}
-          .bi{flex:none;width:46px;height:46px;border-radius:14px;background:var(--chip);color:var(--accent);display:flex;align-items:center;justify-content:center}
-          .tx{min-width:0;display:block}
-          .nm{display:block;font-weight:800;font-size:18px;line-height:1.25;word-break:break-word}
-          .sub{display:block;margin-top:3px;color:var(--muted);font-size:12.5px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-          .more{flex:none;width:42px;height:42px;padding:0;border-radius:50%;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center}
-          .more:active{background:var(--line)}
-          #theme,#data{flex:none;width:44px;height:44px;padding:0;border-radius:50%;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background .15s,transform .15s}
-          #theme:active,#data:active{background:var(--line);transform:rotate(25deg) scale(.92)}
-          .empty{text-align:center;padding:36px 12px 0;color:var(--muted)}
-          .empty svg{display:block;margin:0 auto 14px}
-          .empty b{display:block;color:var(--text);font-size:19px;font-weight:800;margin-bottom:6px}
-          .empty p{margin:0 auto 20px;max-width:300px;font-size:15px}
-          .primary{background:var(--accent);color:#fff;font-weight:700}
-          .secondary{background:transparent;color:var(--muted)}
-          .cta{padding:13px 22px;border-radius:14px}
-          .fab{position:fixed;right:20px;bottom:24px;width:62px;height:62px;border-radius:50%;padding:0;background:linear-gradient(135deg,var(--fab1),var(--fab2));display:flex;align-items:center;justify-content:center;box-shadow:0 8px 22px var(--glow),0 2px 6px rgba(0,0,0,.28);transition:transform .15s ease,box-shadow .15s ease}
-          .fab:active{transform:scale(.9) rotate(90deg);box-shadow:0 3px 10px var(--glow)}
-          input{width:100%;padding:13px;margin-bottom:10px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--text);font-size:16px}
-          .ov{display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:16px;z-index:10}
-          .ov.open{display:flex}
-          .ov.open .dlg{animation:pop .18s ease}
-          .dlg{background:var(--card);border-radius:22px;padding:22px;width:100%;max-width:420px}
-          .dlg h2{margin:0 0 14px;font-size:20px;font-weight:800}
-          .row{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
-          .menu{display:none;position:fixed;z-index:20;min-width:176px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:6px;box-shadow:0 10px 28px rgba(0,0,0,.35)}
-          .menu.open{display:block;animation:pop .13s ease}
-          .menu button{display:flex;align-items:center;gap:12px;width:100%;padding:12px;border-radius:10px;background:transparent;color:var(--text);font-size:15px;text-align:left}
-          .menu button:active{background:var(--chip)}
-          .menu .mdel{color:var(--muted)}
-          .tools{display:flex;gap:2px}
-          textarea{width:100%;height:150px;padding:12px;margin-bottom:10px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--text);font:12px/1.4 ui-monospace,monospace;resize:none}
-          .hint{margin:0 0 12px;color:var(--muted);font-size:13.5px}
-          .row button{padding:12px 14px}
-          .toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90%;text-align:center}
-          .toast.show{opacity:1}
-          @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+          :root {
+            color-scheme: light;
+            --bg:#f3f6fb; --card:#fff; --text:#172033;
+            --muted:#718096; --line:#e1e7f0; --accent:#1769e0;
+            --soft:#e8f0ff; --danger:#b42332;
+          }
+          :root[data-theme="dark"] {
+            color-scheme:dark;
+            --bg:#101318; --card:#1b2029; --text:#f3f6fc;
+            --muted:#a1adbf; --line:#303744; --accent:#80b2ff;
+            --soft:#273449; --danger:#ff9a9a;
+          }
+          * {box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+          body {
+            margin:0;background:var(--bg);color:var(--text);
+            font:16px/1.45 system-ui,-apple-system,sans-serif;
+          }
+          main {max-width:620px;margin:auto;padding:18px 16px 110px}
+          header {display:flex;align-items:center;justify-content:space-between;gap:10px;margin:14px 0 20px}
+          h1 {font-size:23px;line-height:1.2;margin:0;font-weight:850;letter-spacing:-.5px}
+          h2 {font-size:20px;margin:0 0 14px}
+          button,input,select,textarea {font:inherit}
+          button {cursor:pointer}
+          .iconbtn {
+            border:1px solid var(--line);background:var(--card);color:var(--text);
+            border-radius:13px;min-width:44px;min-height:44px;padding:9px;
+          }
+          .tools {display:flex;gap:7px}
+          .intro {color:var(--muted);font-size:14px;margin:-8px 0 18px}
+          .search {width:100%;padding:14px 15px;margin-bottom:14px}
+          input,select,textarea {
+            display:block;width:100%;padding:13px 14px;border:1px solid var(--line);
+            border-radius:13px;background:var(--bg);color:var(--text);outline:none;
+          }
+          input:focus,select:focus,textarea:focus {border-color:var(--accent)}
+          .card {background:var(--card);border:1px solid var(--line);border-radius:19px;margin:0 0 11px;overflow:hidden}
+          .stop {display:flex;align-items:center;gap:11px;padding:13px}
+          .busicon {display:grid;place-items:center;flex:none;width:47px;height:47px;border-radius:15px;background:var(--soft);font-size:23px}
+          .info {flex:1;min-width:0}
+          .stopname {font-size:16px;font-weight:800;overflow-wrap:anywhere}
+          .stopid {font-size:12px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+          .actions {display:flex;gap:4px;align-items:center}
+          .small {border:0;border-radius:10px;background:transparent;color:var(--muted);padding:9px;font-size:19px}
+          .small:active,.iconbtn:active {background:var(--soft)}
+          .primary {background:var(--accent);color:white;border:0;font-weight:750;border-radius:13px;padding:13px 16px}
+          .secondary {background:var(--soft);color:var(--text);border:0;border-radius:13px;padding:12px 14px}
+          .danger {color:var(--danger)}
+          .empty {text-align:center;padding:36px 18px;color:var(--muted)}
+          .empty .emoji {font-size:43px;margin-bottom:10px}
+          .empty strong {display:block;color:var(--text);font-size:19px;margin-bottom:6px}
+          .empty p {margin:0 auto 17px;max-width:310px}
+          .bottom {position:fixed;bottom:0;left:0;right:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line)}
+          .bottom button {display:block;max-width:588px;width:100%;margin:auto;font-size:16px}
+          .overlay {display:none;position:fixed;inset:0;background:#0009;z-index:10;align-items:flex-end;justify-content:center;padding:12px}
+          .overlay.open {display:flex}
+          .dialog {background:var(--card);border-radius:23px 23px 18px 18px;padding:22px;width:100%;max-width:500px;max-height:90dvh;overflow:auto;box-shadow:0 15px 60px #0003}
+          .dialog label {display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
+          .dialog .hint {color:var(--muted);font-size:13px;margin:0 0 12px}
+          .row {display:flex;gap:8px;margin-top:16px}
+          .row button {flex:1}
+          .tabs {display:flex;gap:7px;margin:0 0 13px}
+          .tabs button {flex:1}
+          .hidden {display:none!important}
+          .toast {position:fixed;bottom:91px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:11px 16px;border-radius:12px;z-index:30;max-width:90%;font-size:14px;text-align:center}
+          .note {font-size:12px;color:var(--muted);margin-top:10px}
+          @media(min-width:520px) {
+            .overlay {align-items:center}
+            .dialog {border-radius:23px}
+          }
+          @media(prefers-reduced-motion:reduce) { * {scroll-behavior:auto!important} }
           </style>
           </head>
           <body>
           <main>
             <header>
-              <h1 id="h1"></h1>
-              <div class="tools"><button id="data"></button><button id="theme"></button></div>
+              <div>
+                <h1 id="title">Bus Schedule Łódź</h1>
+                <div style="font-size:12px;color:var(--muted);margin-top:4px">MPK Łódź · 2.0</div>
+              </div>
+              <div class="tools">
+                <button class="iconbtn" id="langBtn" aria-label="Language">PL</button>
+                <button class="iconbtn" id="themeBtn" aria-label="Theme">☾</button>
+                <button class="iconbtn" id="backupBtn" aria-label="Backup">⇧</button>
+              </div>
             </header>
-            <div id="list"></div>
+
+            <p class="intro" id="intro"></p>
+            <input id="search" class="search" type="search" autocomplete="off">
+            <div class="tabs">
+              <button class="secondary" id="allTab"></button>
+              <button class="secondary" id="favTab"></button>
+            </div>
+            <section id="list" aria-live="polite"></section>
           </main>
-          <button class="fab" id="add"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-          <div class="menu" id="menu">
-            <button id="mEdit"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/></svg><span id="tEdit"></span></button>
-            <button id="mDel" class="mdel"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span id="tDel"></span></button>
+
+          <div class="bottom">
+            <button class="primary" id="addBtn">＋</button>
           </div>
-          <div class="ov" id="ov">
-            <div class="dlg">
-              <h2 id="ttl"></h2>
-              <input id="name" autocomplete="off">
-              <input id="url" type="url" autocomplete="off">
+
+          <div class="overlay" id="editOverlay">
+            <section class="dialog">
+              <h2 id="formTitle"></h2>
+              <form id="stopForm">
+                <label id="nameLabel" for="stopName"></label>
+                <input id="stopName" maxlength="100" required autocomplete="off">
+                <label id="urlLabel" for="stopUrl"></label>
+                <input id="stopUrl" maxlength="500" required autocomplete="url" autocapitalize="off" spellcheck="false">
+                <p class="note" id="urlHint"></p>
+                <label id="favLabel" style="display:flex;align-items:center;gap:10px">
+                  <input id="isFav" type="checkbox" style="width:20px;height:20px"> <span id="favText"></span>
+                </label>
+                <div class="row">
+                  <button type="button" class="secondary" id="cancelBtn"></button>
+                  <button type="submit" class="primary" id="saveBtn"></button>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <div class="overlay" id="backupOverlay">
+            <section class="dialog">
+              <h2 id="backupTitle"></h2>
+              <p class="hint" id="backupHint"></p>
+              <textarea id="backupText" rows="9" spellcheck="false"></textarea>
               <div class="row">
-                <button class="secondary" id="cancel"></button>
-                <button class="primary" id="save"></button>
+                <button class="secondary" id="copyBtn" type="button"></button>
+                <button class="secondary" id="closeBackup" type="button"></button>
+                <button class="primary" id="importBtn" type="button"></button>
               </div>
-            </div>
+              <p class="note" id="backupNote"></p>
+            </section>
           </div>
-          <div class="ov" id="ov2">
-            <div class="dlg">
-              <h2 id="dTitle"></h2>
-              <p class="hint" id="dHint"></p>
-              <textarea id="dataTxt" spellcheck="false" autocomplete="off"></textarea>
-              <div class="row">
-                <button class="secondary" id="dClose"></button>
-                <button class="secondary" id="dCopy"></button>
-                <button class="primary" id="dImport"></button>
-              </div>
-            </div>
-          </div>
-          <div class="toast" id="toast"></div>
+          <div id="toast" class="toast hidden" role="status"></div>
+
           <script>
-          var L={
-            ru:{title:"Расписание автобусов",emptyT:"Добавьте первую остановку",emptyP:"Сохраните ссылку на расписание, чтобы открывать его в одно касание.",addFirst:"Добавить остановку",newStop:"Новая остановка",editStop:"Изменить остановку",name:"Название остановки",url:"Вставьте ссылку на расписание",cancel:"Отмена",save:"Сохранить",edit:"Изменить",remove:"Удалить",del:"Удалить «%s»?",theme:"Сменить тему",dTitle:"Резервная копия",dHint:"Скопируйте этот текст и сохраните, например, в заметках. Чтобы восстановить остановки, вставьте сохранённый текст сюда и нажмите «Импорт».",dClose:"Закрыть",dCopy:"Копировать",dImport:"Импорт",copied:"Скопировано",imp:"Добавлено: %n",bad:"Неверные данные",dataLbl:"Резервная копия"},
-            uk:{title:"Розклад автобусів",emptyT:"Додайте першу зупинку",emptyP:"Збережіть посилання на розклад, щоб відкривати його одним дотиком.",addFirst:"Додати зупинку",newStop:"Нова зупинка",editStop:"Змінити зупинку",name:"Назва зупинки",url:"Вставте посилання на розклад",cancel:"Скасувати",save:"Зберегти",edit:"Змінити",remove:"Видалити",del:"Видалити «%s»?",theme:"Змінити тему",dTitle:"Резервна копія",dHint:"Скопіюйте цей текст і збережіть, наприклад, у нотатках. Щоб відновити зупинки, вставте збережений текст сюди й натисніть «Імпорт».",dClose:"Закрити",dCopy:"Копіювати",dImport:"Імпорт",copied:"Скопійовано",imp:"Додано: %n",bad:"Некоректні дані",dataLbl:"Резервна копія"},
-            pl:{title:"Rozkład autobusów",emptyT:"Dodaj pierwszy przystanek",emptyP:"Zapisz link do rozkładu, aby otwierać go jednym dotknięciem.",addFirst:"Dodaj przystanek",newStop:"Nowy przystanek",editStop:"Edytuj przystanek",name:"Nazwa przystanku",url:"Wklej link do rozkładu",cancel:"Anuluj",save:"Zapisz",edit:"Edytuj",remove:"Usuń",del:"Usunąć „%s”?",theme:"Zmień motyw",dTitle:"Kopia zapasowa",dHint:"Skopiuj ten tekst i zapisz go, np. w notatkach. Aby przywrócić przystanki, wklej zapisany tekst tutaj i naciśnij „Importuj”.",dClose:"Zamknij",dCopy:"Kopiuj",dImport:"Importuj",copied:"Skopiowano",imp:"Dodano: %n",bad:"Nieprawidłowe dane",dataLbl:"Kopia zapasowa"},
-            en:{title:"Bus timetable",emptyT:"Add your first stop",emptyP:"Save a timetable link to open it with a single tap.",addFirst:"Add a stop",newStop:"New stop",editStop:"Edit stop",name:"Stop name",url:"Paste the timetable link",cancel:"Cancel",save:"Save",edit:"Edit",remove:"Delete",del:"Delete “%s”?",theme:"Switch theme",dTitle:"Backup",dHint:"Copy this text and save it somewhere, e.g. in your notes. To restore your stops, paste the saved text here and tap “Import”.",dClose:"Close",dCopy:"Copy",dImport:"Import",copied:"Copied",imp:"Added: %n",bad:"Invalid data",dataLbl:"Backup"}
-          };
-          var lang=((navigator.language||"en")+"").slice(0,2).toLowerCase();
-          var T=L[lang]||L.en;
-          document.documentElement.lang=L[lang]?lang:"en";
-          document.title=T.title;
-          function $(id){return document.getElementById(id)}
-          $("h1").textContent=T.title;
-          $("name").placeholder=T.name;
-          $("url").placeholder=T.url;
-          $("cancel").textContent=T.cancel;
-          $("save").textContent=T.save;
-          $("tEdit").textContent=T.edit;
-          $("tDel").textContent=T.remove;
-          $("theme").setAttribute("aria-label",T.theme);
-          $("add").setAttribute("aria-label",T.newStop);
-          $("dTitle").textContent=T.dTitle;
-          $("dHint").textContent=T.dHint;
-          $("dClose").textContent=T.dClose;
-          $("dCopy").textContent=T.dCopy;
-          $("dImport").textContent=T.dImport;
-          $("data").setAttribute("aria-label",T.dataLbl);
+          (() => {
+            "use strict";
 
-          var SVG='<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
-          var SUN=SVG+'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
-          var MOON=SVG+'<path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.8 6.8 0 0 0 9.8 9.8z"/></svg>';
-          var DATA=SVG+'<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>';
-          var BUS='<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="14" rx="3"/><path d="M4 11h16M7 17v3M17 17v3"/><circle cx="8" cy="14" r=".7"/><circle cx="16" cy="14" r=".7"/></svg>';
-          var DOTS='<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>';
-          var ART='<svg viewBox="0 0 160 140" width="150" height="131" aria-hidden="true"><ellipse cx="80" cy="130" rx="52" ry="6" style="fill:var(--line)"/><rect x="60" y="8" width="40" height="13" rx="6" style="fill:var(--accent)"/><rect x="30" y="20" width="100" height="94" rx="22" style="fill:var(--card);stroke:var(--accent);stroke-width:4"/><rect x="43" y="35" width="74" height="42" rx="11" style="fill:var(--chip)"/><path d="M60 77l13-42h9L69 77z" style="fill:var(--accent);opacity:.2"/><rect x="34" y="86" width="92" height="6" style="fill:var(--accent)"/><circle cx="51" cy="101" r="6" style="fill:var(--accent)"/><circle cx="109" cy="101" r="6" style="fill:var(--accent)"/><rect x="46" y="112" width="20" height="14" rx="5" style="fill:var(--accent)"/><rect x="94" y="112" width="20" height="14" rx="5" style="fill:var(--accent)"/></svg>';
+            const $ = id => document.getElementById(id);
+            const STORAGE = "bus-schedule-lodz-v2";
+            const OLD_STORAGE = "bus-stops";
+            const THEME_KEY = "bus-theme-v2";
+            const LANG_KEY = "bus-lang-v2";
 
-          var KEY="bus-stops",stops=[],editing=-1,isOpen=false,menuIdx=-1,first=true;
-          function applyTheme(t){
-            document.documentElement.setAttribute("data-theme",t);
-            $("theme").innerHTML=(t==="dark")?SUN:MOON;
-          }
-          var theme=null;
-          try{theme=localStorage.getItem("theme")}catch(e){}
-          if(theme!=="dark"&&theme!=="light"){
-            theme=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";
-          }
-          $("data").innerHTML=DATA;
-          applyTheme(theme);
-          $("theme").onclick=function(){
-            theme=(theme==="dark")?"light":"dark";
-            applyTheme(theme);
-            try{localStorage.setItem("theme",theme)}catch(e){}
-          };
-          function load(){try{stops=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){stops=[]}}
-          function store(){try{localStorage.setItem(KEY,JSON.stringify(stops))}catch(e){}}
-          function esc(s){return s.replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
-          function hostOf(u){try{return new URL(u).host}catch(e){return u}}
-          function render(){
-            var l=$("list");
-            if(!stops.length){
-              l.innerHTML='<div class="empty">'+ART+'<b>'+T.emptyT+'</b><p>'+T.emptyP+'</p><button class="primary cta" onclick="openDlg()">+ '+T.addFirst+'</button></div>';
-              first=false;return
+            const dict = {
+              en: {
+                title:"Bus Schedule Łódź", intro:"Your saved stops, one tap away.",
+                search:"Search stops by name or number…", all:"All stops", favOnly:"★ Favourites",
+                add:"＋ Add stop", empty:"No stops yet", emptyText:"Add a stop to open its official timetable quickly.",
+                addFirst:"Add your first stop", edit:"Edit stop", newStop:"New stop",
+                name:"Stop name", url:"Stop number or timetable link", urlHint:"Enter a stop number, or paste a link from rozklady.lodz.pl.",
+                fav:"Add to favourites", cancel:"Cancel", save:"Save stop", update:"Save changes",
+                invalidName:"Enter a stop name.", invalidUrl:"Enter a stop number or a valid timetable link from rozklady.lodz.pl.",
+                duplicate:"This timetable is already saved.", saved:"Stop saved.", updated:"Stop updated.",
+                deleted:"Stop deleted.", confirmDelete:"Delete this stop?", open:"Open timetable",
+                favourite:"Toggle favourite", backup:"Backup / restore", backupHint:"Copy this JSON and keep it in your notes. To restore, paste a previously saved backup here.",
+                copy:"Select text", close:"Close", import:"Restore backup", copied:"Text selected. Copy it using your phone menu.",
+                restored:"Backup restored.", badBackup:"Invalid backup. No data was changed.",
+                noFav:"No favourite stops yet.", lang:"Language", theme:"Switch theme",
+                namePlaceholder:"e.g. Piotrkowska Centrum", urlPlaceholder:"e.g. 209 or timetable URL",
+                delete:"Delete", editAction:"Edit", count:n=>`${n} stop(s)`,
+                backupNote:"Restoring replaces the current list. Export a backup first if needed."
+              },
+              pl: {
+                title:"Rozkład Łódź", intro:"Zapisane przystanki zawsze pod ręką.",
+                search:"Szukaj przystanku lub numeru…", all:"Wszystkie", favOnly:"★ Ulubione",
+                add:"＋ Dodaj przystanek", empty:"Brak przystanków", emptyText:"Dodaj przystanek, aby szybko otwierać oficjalny rozkład.",
+                addFirst:"Dodaj pierwszy przystanek", edit:"Edytuj przystanek", newStop:"Nowy przystanek",
+                name:"Nazwa przystanku", url:"Numer przystanku lub link do rozkładu", urlHint:"Wpisz numer albo wklej link z rozklady.lodz.pl.",
+                fav:"Dodaj do ulubionych", cancel:"Anuluj", save:"Zapisz przystanek", update:"Zapisz zmiany",
+                invalidName:"Wpisz nazwę przystanku.", invalidUrl:"Wpisz numer lub prawidłowy link z rozklady.lodz.pl.",
+                duplicate:"Ten rozkład jest już zapisany.", saved:"Zapisano przystanek.", updated:"Zaktualizowano przystanek.",
+                deleted:"Usunięto przystanek.", confirmDelete:"Usunąć ten przystanek?", open:"Otwórz rozkład",
+                favourite:"Zmień ulubione", backup:"Kopia / przywracanie", backupHint:"Skopiuj JSON i zachowaj go w notatkach. Aby przywrócić, wklej wcześniej zapisaną kopię.",
+                copy:"Zaznacz tekst", close:"Zamknij", import:"Przywróć kopię", copied:"Tekst zaznaczony. Skopiuj go z menu telefonu.",
+                restored:"Przywrócono kopię.", badBackup:"Nieprawidłowa kopia. Dane nie zostały zmienione.",
+                noFav:"Brak ulubionych przystanków.", lang:"Język", theme:"Zmień motyw",
+                namePlaceholder:"np. Piotrkowska Centrum", urlPlaceholder:"np. 209 lub link",
+                delete:"Usuń", editAction:"Edytuj", count:n=>`Przystanki: ${n}`,
+                backupNote:"Przywracanie zastępuje obecną listę. W razie potrzeby najpierw wykonaj kopię."
+              },
+              ru: {
+                title:"Расписание Лодзь", intro:"Твои остановки всегда под рукой.",
+                search:"Поиск остановки или номера…", all:"Все остановки", favOnly:"★ Избранное",
+                add:"＋ Добавить остановку", empty:"Пока нет остановок", emptyText:"Добавь остановку, чтобы быстро открывать официальное расписание.",
+                addFirst:"Добавить первую остановку", edit:"Изменить остановку", newStop:"Новая остановка",
+                name:"Название остановки", url:"Номер остановки или ссылка", urlHint:"Введи номер либо вставь ссылку с rozklady.lodz.pl.",
+                fav:"Добавить в избранное", cancel:"Отмена", save:"Сохранить остановку", update:"Сохранить изменения",
+                invalidName:"Введи название остановки.", invalidUrl:"Введи номер или корректную ссылку с rozklady.lodz.pl.",
+                duplicate:"Это расписание уже сохранено.", saved:"Остановка сохранена.", updated:"Остановка обновлена.",
+                deleted:"Остановка удалена.", confirmDelete:"Удалить эту остановку?", open:"Открыть расписание",
+                favourite:"Изменить избранное", backup:"Резервная копия / восстановление", backupHint:"Скопируй JSON и сохрани в заметках. Для восстановления вставь ранее сохранённую копию.",
+                copy:"Выделить текст", close:"Закрыть", import:"Восстановить", copied:"Текст выделен. Скопируй его через меню телефона.",
+                restored:"Резервная копия восстановлена.", badBackup:"Неверная копия. Данные не изменены.",
+                noFav:"Избранных остановок пока нет.", lang:"Язык", theme:"Сменить тему",
+                namePlaceholder:"Например, Piotrkowska Centrum", urlPlaceholder:"Например, 209 или ссылка",
+                delete:"Удалить", editAction:"Изменить", count:n=>`Остановок: ${n}`,
+                backupNote:"Восстановление заменит текущий список. При необходимости сначала сделай копию."
+              },
+              uk: {
+                title:"Розклад Лодзь", intro:"Твої зупинки завжди під рукою.",
+                search:"Пошук зупинки або номера…", all:"Усі зупинки", favOnly:"★ Обране",
+                add:"＋ Додати зупинку", empty:"Поки немає зупинок", emptyText:"Додай зупинку, щоб швидко відкривати офіційний розклад.",
+                addFirst:"Додати першу зупинку", edit:"Змінити зупинку", newStop:"Нова зупинка",
+                name:"Назва зупинки", url:"Номер зупинки або посилання", urlHint:"Введи номер або встав посилання з rozklady.lodz.pl.",
+                fav:"Додати до обраного", cancel:"Скасувати", save:"Зберегти зупинку", update:"Зберегти зміни",
+                invalidName:"Введи назву зупинки.", invalidUrl:"Введи номер або коректне посилання з rozklady.lodz.pl.",
+                duplicate:"Цей розклад уже збережено.", saved:"Зупинку збережено.", updated:"Зупинку оновлено.",
+                deleted:"Зупинку видалено.", confirmDelete:"Видалити цю зупинку?", open:"Відкрити розклад",
+                favourite:"Змінити обране", backup:"Резервна копія / відновлення", backupHint:"Скопіюй JSON і збережи в нотатках. Для відновлення встав раніше збережену копію.",
+                copy:"Виділити текст", close:"Закрити", import:"Відновити", copied:"Текст виділено. Скопіюй його через меню телефону.",
+                restored:"Резервну копію відновлено.", badBackup:"Некоректна копія. Дані не змінено.",
+                noFav:"В обраному поки немає зупинок.", lang:"Мова", theme:"Змінити тему",
+                namePlaceholder:"Наприклад, Piotrkowska Centrum", urlPlaceholder:"Наприклад, 209 або посилання",
+                delete:"Видалити", editAction:"Змінити", count:n=>`Зупинок: ${n}`,
+                backupNote:"Відновлення замінить поточний список. За потреби спочатку створи копію."
+              }
+            };
+
+            let lang = "pl";
+            let theme = "light";
+            let stops = [];
+            let editingId = null;
+            let favouritesOnly = false;
+            let toastTimer;
+
+            function load(key) {
+              try { return localStorage.getItem(key); } catch (_) { return null; }
             }
-            l.innerHTML=stops.map(function(s,i){
-              var cls="card stop"+(first?" enter":"");
-              var delay=first?' style="animation-delay:'+(i*45)+'ms"':'';
-              return '<div class="'+cls+'"'+delay+'><a class="main" href="'+esc(s.url)+'" target="_blank"><span class="bi">'+BUS+'</span><span class="tx"><span class="nm">'+esc(s.name)+'</span><span class="sub">'+esc(hostOf(s.url))+'</span></span></a>'+
-              '<button class="more" onclick="showMenu(event,'+i+')">'+DOTS+'</button></div>'
-            }).join("");
-            first=false
-          }
-          function hideMenu(){$("menu").className="menu"}
-          function showMenu(ev,i){
-            ev.stopPropagation();
-            var m=$("menu");
-            if(m.className.indexOf("open")>=0&&menuIdx===i){hideMenu();return}
-            menuIdx=i;
-            var r=ev.currentTarget.getBoundingClientRect();
-            m.className="menu open";
-            var h=m.offsetHeight,top=r.bottom+4;
-            if(top+h>window.innerHeight-8)top=Math.max(8,r.top-h-4);
-            m.style.top=top+"px";m.style.left="auto";
-            m.style.right=Math.max(8,window.innerWidth-r.right)+"px"
-          }
-          document.addEventListener("click",hideMenu);
-          window.addEventListener("scroll",hideMenu,{passive:true});
-          $("mEdit").onclick=function(){var i=menuIdx;hideMenu();openDlg(i)};
-          $("mDel").onclick=function(){var i=menuIdx;hideMenu();del(i)};
-          function fixUrl(u){u=u.trim();if(u&&!/^https?:\/\//i.test(u))u="https://"+u;return u}
-          function openDlg(i){
-            editing=(typeof i==="number")?i:-1;
-            $("ttl").textContent=editing>=0?T.editStop:T.newStop;
-            $("name").value=editing>=0?stops[editing].name:"";
-            $("url").value=editing>=0?stops[editing].url:"";
-            $("ov").className="ov open";
-            if(!isOpen){isOpen=true;try{history.pushState({d:1},"")}catch(e){}}
-            setTimeout(function(){$("name").focus()},50)
-          }
-          function hideDlg(){isOpen=false;$("ov").className="ov";$("ov2").className="ov"}
-          function closeDlg(){if(isOpen){try{history.back()}catch(e){hideDlg()}}}
-          window.addEventListener("popstate",hideDlg);
-          $("add").onclick=function(){openDlg()};
-          $("cancel").onclick=closeDlg;
-          $("ov").onclick=function(e){if(e.target===this)closeDlg()};
-          $("save").onclick=function(){
-            var n=$("name").value.trim(),u=fixUrl($("url").value);
-            if(!n||!u)return;
-            if(editing>=0){stops[editing]={name:n,url:u}}else stops.push({name:n,url:u});
-            store();render();closeDlg()
-          };
-          var toastT=null;
-          function toast(m){var t=$("toast");t.textContent=m;t.className="toast show";clearTimeout(toastT);toastT=setTimeout(function(){t.className="toast"},2200)}
-          function openData(){
-            $("dataTxt").value=JSON.stringify({app:"bus-schedule",v:1,stops:stops});
-            $("ov2").className="ov open";
-            if(!isOpen){isOpen=true;try{history.pushState({d:1},"")}catch(e){}}
-          }
-          function doCopy(){
-            var t=$("dataTxt"),ok=false;
-            t.focus();t.select();
-            try{ok=document.execCommand("copy")}catch(e){}
-            if(ok){toast(T.copied)}
-            else if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t.value).then(function(){toast(T.copied)},function(){})}
-          }
-          function doImport(){
-            var arr=null;
-            try{var o=JSON.parse($("dataTxt").value.trim());arr=Array.isArray(o)?o:o.stops}catch(e){}
-            if(!Array.isArray(arr)){toast(T.bad);return}
-            var n=0;
-            arr.forEach(function(s){
-              if(!s||typeof s.name!=="string"||typeof s.url!=="string")return;
-              var name=s.name.trim(),url=fixUrl(s.url);
-              if(!name||!url)return;
-              var dup=stops.some(function(x){return x.name===name&&x.url===url});
-              if(!dup){stops.push({name:name,url:url});n++}
+            function persist() {
+              try {
+                localStorage.setItem(STORAGE, JSON.stringify(stops));
+                return true;
+              } catch (_) {
+                notify("Storage unavailable");
+                return false;
+              }
+            }
+            function tr(key, ...args) {
+              const val = dict[lang][key] ?? dict.en[key] ?? key;
+              return typeof val === "function" ? val(...args) : val;
+            }
+            function notify(message) {
+              const el = $("toast");
+              el.textContent = message;
+              el.classList.remove("hidden");
+              clearTimeout(toastTimer);
+              toastTimer = setTimeout(() => el.classList.add("hidden"), 2600);
+            }
+            function safeUrl(value) {
+              const raw = String(value || "").trim();
+              if (/^\d+$/.test(raw)) {
+                return "http://rozklady.lodz.pl/Home/TimeTableReal?busStopNum=" + raw;
+              }
+              try {
+                const u = new URL(raw);
+                if (!["http:", "https:"].includes(u.protocol)) return null;
+                if (u.hostname.toLowerCase() !== "rozklady.lodz.pl") return null;
+                if (u.username || u.password) return null;
+                if (!u.pathname.startsWith("/Home/TimeTableReal")) return null;
+                const num = u.searchParams.get("busStopNum");
+                if (!num || !/^\d+$/.test(num)) return null;
+                return u.href;
+              } catch (_) { return null; }
+            }
+            function stopNumber(url) {
+              try { return new URL(url).searchParams.get("busStopNum") || ""; }
+              catch (_) { return ""; }
+            }
+            function uid() {
+              return "s-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,8);
+            }
+
+            function render() {
+              $("title").textContent = tr("title");
+              $("intro").textContent = tr("intro");
+              $("search").placeholder = tr("search");
+              $("allTab").textContent = tr("all");
+              $("favTab").textContent = tr("favOnly");
+              $("addBtn").textContent = tr("add");
+              $("addBtn").setAttribute("aria-label", tr("add"));
+              $("langBtn").textContent = lang.toUpperCase();
+              $("langBtn").setAttribute("aria-label", tr("lang"));
+              $("themeBtn").textContent = theme === "dark" ? "☀" : "☾";
+              $("themeBtn").setAttribute("aria-label", tr("theme"));
+              $("backupBtn").setAttribute("aria-label", tr("backup"));
+              $("allTab").className = favouritesOnly ? "secondary" : "primary";
+              $("favTab").className = favouritesOnly ? "primary" : "secondary";
+
+              const q = $("search").value.trim().toLocaleLowerCase();
+              const filtered = stops.filter(s =>
+                (!favouritesOnly || s.fav) &&
+                (s.name.toLocaleLowerCase().includes(q) ||
+                 stopNumber(s.url).includes(q))
+              );
+              const list = $("list");
+              list.replaceChildren();
+
+              if (!filtered.length) {
+                const empty = document.createElement("div");
+                empty.className = "card empty";
+                const icon = document.createElement("div");
+                icon.className = "emoji";
+                icon.textContent = favouritesOnly ? "☆" : "🚏";
+                const title = document.createElement("strong");
+                title.textContent = favouritesOnly ? tr("noFav") : tr("empty");
+                const p = document.createElement("p");
+                p.textContent = tr("emptyText");
+                empty.append(icon, title, p);
+                if (!favouritesOnly && !q) {
+                  const b = document.createElement("button");
+                  b.className = "primary";
+                  b.textContent = tr("addFirst");
+                  b.onclick = () => openForm();
+                  empty.append(b);
+                }
+                list.append(empty);
+                return;
+              }
+
+              filtered.forEach(s => {
+                const card = document.createElement("article");
+                card.className = "card";
+                const row = document.createElement("div");
+                row.className = "stop";
+
+                const icon = document.createElement("div");
+                icon.className = "busicon";
+                icon.textContent = "🚏";
+
+                const info = document.createElement("div");
+                info.className = "info";
+                const name = document.createElement("div");
+                name.className = "stopname";
+                name.textContent = s.name;
+                const sub = document.createElement("div");
+                sub.className = "stopid";
+                sub.textContent = "№ " + stopNumber(s.url);
+                info.append(name, sub);
+                info.title = tr("open");
+
+                const actions = document.createElement("div");
+                actions.className = "actions";
+                const open = document.createElement("button");
+                open.className = "small";
+                open.textContent = "↗";
+                open.title = tr("open");
+                open.setAttribute("aria-label", tr("open"));
+                open.onclick = () => { location.href = s.url; };
+
+                const fav = document.createElement("button");
+                fav.className = "small";
+                fav.textContent = s.fav ? "★" : "☆";
+                fav.title = tr("favourite");
+                fav.setAttribute("aria-label", tr("favourite"));
+                fav.onclick = () => {
+                  s.fav = !s.fav;
+                  persist();
+                  render();
+                };
+
+                const edit = document.createElement("button");
+                edit.className = "small";
+                edit.textContent = "✎";
+                edit.title = tr("editAction");
+                edit.setAttribute("aria-label", tr("editAction"));
+                edit.onclick = () => openForm(s.id);
+
+                const del = document.createElement("button");
+                del.className = "small danger";
+                del.textContent = "×";
+                del.title = tr("delete");
+                del.setAttribute("aria-label", tr("delete"));
+                del.onclick = () => {
+                  if (!confirm(tr("confirmDelete"))) return;
+                  stops = stops.filter(x => x.id !== s.id);
+                  persist();
+                  render();
+                  notify(tr("deleted"));
+                };
+
+                actions.append(open, fav, edit, del);
+                row.append(icon, info, actions);
+                card.append(row);
+                list.append(card);
+              });
+            }
+
+            function openForm(id = null) {
+              editingId = id;
+              const s = stops.find(x => x.id === id);
+              $("formTitle").textContent = s ? tr("edit") : tr("newStop");
+              $("nameLabel").textContent = tr("name");
+              $("urlLabel").textContent = tr("url");
+              $("urlHint").textContent = tr("urlHint");
+              $("favText").textContent = tr("fav");
+              $("cancelBtn").textContent = tr("cancel");
+              $("saveBtn").textContent = s ? tr("update") : tr("save");
+              $("stopName").placeholder = tr("namePlaceholder");
+              $("stopUrl").placeholder = tr("urlPlaceholder");
+              $("stopName").value = s ? s.name : "";
+              $("stopUrl").value = s ? s.url : "";
+              $("isFav").checked = s ? !!s.fav : false;
+              $("editOverlay").classList.add("open");
+              setTimeout(() => $("stopName").focus(), 100);
+            }
+            function closeForm() {
+              $("editOverlay").classList.remove("open");
+              editingId = null;
+            }
+
+            $("stopForm").addEventListener("submit", e => {
+              e.preventDefault();
+              const name = $("stopName").value.trim();
+              const url = safeUrl($("stopUrl").value);
+              if (!name) return notify(tr("invalidName"));
+              if (!url) return notify(tr("invalidUrl"));
+
+              const duplicate = stops.some(s => s.url === url && s.id !== editingId);
+              if (duplicate) return notify(tr("duplicate"));
+
+              if (editingId) {
+                const s = stops.find(x => x.id === editingId);
+                if (s) Object.assign(s, {name, url, fav:$("isFav").checked});
+                notify(tr("updated"));
+              } else {
+                stops.push({id:uid(), name, url, fav:$("isFav").checked});
+                notify(tr("saved"));
+              }
+              persist();
+              closeForm();
+              render();
             });
-            if(n>0){store();render();closeDlg()}
-            toast(T.imp.replace("%n",n))
-          }
-          $("data").onclick=openData;
-          $("dClose").onclick=closeDlg;
-          $("dCopy").onclick=doCopy;
-          $("dImport").onclick=doImport;
-          $("ov2").onclick=function(e){if(e.target===this)closeDlg()};
-          function del(i){if(confirm(T.del.replace("%s",stops[i].name))){stops.splice(i,1);store();render()}}
-          load();render();
+
+            $("addBtn").onclick = () => openForm();
+            $("cancelBtn").onclick = closeForm;
+            $("editOverlay").addEventListener("click", e => {
+              if (e.target === $("editOverlay")) closeForm();
+            });
+            $("search").addEventListener("input", render);
+            $("allTab").onclick = () => { favouritesOnly = false; render(); };
+            $("favTab").onclick = () => { favouritesOnly = true; render(); };
+
+            function setTheme(value) {
+              theme = value === "dark" ? "dark" : "light";
+              document.documentElement.dataset.theme = theme;
+              try { localStorage.setItem(THEME_KEY, theme); } catch (_) {}
+              render();
+            }
+            $("themeBtn").onclick = () => setTheme(theme === "dark" ? "light" : "dark");
+
+            $("langBtn").onclick = () => {
+              const order = ["pl","uk","ru","en"];
+              lang = order[(order.indexOf(lang) + 1) % order.length];
+              try { localStorage.setItem(LANG_KEY, lang); } catch (_) {}
+              document.documentElement.lang = lang;
+              render();
+            };
+
+            function openBackup() {
+              $("backupTitle").textContent = tr("backup");
+              $("backupHint").textContent = tr("backupHint");
+              $("backupNote").textContent = tr("backupNote");
+              $("copyBtn").textContent = tr("copy");
+              $("closeBackup").textContent = tr("close");
+              $("importBtn").textContent = tr("import");
+              $("backupText").value = JSON.stringify({
+                format:"bus-schedule-lodz",
+                version:2,
+                stops:stops
+              }, null, 2);
+              $("backupOverlay").classList.add("open");
+            }
+            $("backupBtn").onclick = openBackup;
+            $("closeBackup").onclick = () => $("backupOverlay").classList.remove("open");
+            $("backupOverlay").addEventListener("click", e => {
+              if (e.target === $("backupOverlay")) $("backupOverlay").classList.remove("open");
+            });
+            $("copyBtn").onclick = () => {
+              $("backupText").focus();
+              $("backupText").select();
+              notify(tr("copied"));
+            };
+            $("importBtn").onclick = () => {
+              try {
+                const data = JSON.parse($("backupText").value);
+                if (!data || !Array.isArray(data.stops) || data.stops.length > 1000) throw Error();
+                const restored = data.stops.map(s => {
+                  if (!s || typeof s.name !== "string") throw Error();
+                  const url = safeUrl(s.url);
+                  const name = s.name.trim();
+                  if (!name || !url) throw Error();
+                  return {
+                    id: typeof s.id === "string" ? s.id : uid(),
+                    name:name.slice(0,100),
+                    url,
+                    fav:!!s.fav
+                  };
+                });
+                const unique = [];
+                const seen = new Set();
+                for (const s of restored) {
+                  if (!seen.has(s.url)) {
+                    seen.add(s.url);
+                    unique.push(s);
+                  }
+                }
+                stops = unique;
+                if (!persist()) return;
+                $("backupOverlay").classList.remove("open");
+                favouritesOnly = false;
+                render();
+                notify(tr("restored"));
+              } catch (_) {
+                notify(tr("badBackup"));
+              }
+            };
+
+            try {
+              const saved = load(STORAGE);
+              if (saved) {
+                const data = JSON.parse(saved);
+                if (Array.isArray(data)) {
+                  stops = data.map(s => ({
+                    id:typeof s.id === "string" ? s.id : uid(),
+                    name:String(s.name || "").slice(0,100),
+                    url:safeUrl(s.url),
+                    fav:!!s.fav
+                  })).filter(s => s.name && s.url);
+                }
+              } else {
+                const old = load(OLD_STORAGE);
+                if (old) {
+                  const data = JSON.parse(old);
+                  if (Array.isArray(data)) {
+                    stops = data.map(s => ({
+                      id:uid(),
+                      name:String(s.name || "").slice(0,100),
+                      url:safeUrl(s.url),
+                      fav:false
+                    })).filter(s => s.name && s.url);
+                  }
+                }
+              }
+            } catch (_) { stops = []; }
+
+            const savedLang = load(LANG_KEY);
+            const deviceLang = (navigator.language || "pl").slice(0,2).toLowerCase();
+            lang = dict[savedLang] ? savedLang : (dict[deviceLang] ? deviceLang : "pl");
+            const savedTheme = load(THEME_KEY);
+            theme = savedTheme === "dark" || savedTheme === "light"
+              ? savedTheme
+              : ((window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
+            document.documentElement.dataset.theme = theme;
+            document.documentElement.lang = lang;
+            persist();
+            render();
+          })();
           </script>
           </body>
           </html>
           EOF
 
-          if [ -f icon.png ]; then
-            mkdir -p app/src/main/res/mipmap-xxhdpi
-            cp icon.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-            sed -i 's|<application|<application android:icon="@mipmap/ic_launcher"|' app/src/main/AndroidManifest.xml
-          fi
-      - name: Build APK
-        run: gradle assembleDebug
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk bus-schedule.apk
-      - uses: actions/upload-artifact@v4
+      - name: Build debug APK
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          mkdir -p release
+          cp "$APK" release/Bus-Schedule-Lodz.apk
+          sha256sum release/Bus-Schedule-Lodz.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: bus-schedule-apk
-          path: bus-schedule.apk
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.run_number }}
-          name: Автобусы v${{ github.run_number }}
-          files: bus-schedule.apk
-          
+          name: Bus-Schedule-Lodz-APK
+          path: release/Bus-Schedule-Lodz.apk
+          if-no-files-found: error
+          retention-days: 14
